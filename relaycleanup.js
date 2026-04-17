@@ -93,7 +93,8 @@ module.exports.relaycleanup = function (parent) {
                 noExpiry: !expire,
                 stale: start > 0 && ageMs > staleMs,
                 expired: expire > 0 && expire < now,
-                duplicate: false
+                duplicate: false,
+                orphaned: false  // filled in by buildReport (needs node index)
             };
 
             const group = groups[[s.nodeid, s.p, s.userid].join("|")];
@@ -116,6 +117,7 @@ module.exports.relaycleanup = function (parent) {
             const s = c.share;
             const node = dirs.nodeIndex[s.nodeid];
             const user = dirs.userIndex[s.userid];
+            c.flags.orphaned = !node;
             // Creation/start time has moved between MeshCentral versions — try
             // several plausible fields so something displays.
             const startTime = s.startTime || s.time || s.creationTime || s.created || 0;
@@ -291,6 +293,8 @@ module.exports.relaycleanup = function (parent) {
  th,td{border:1px solid #ddd;padding:4px 6px;text-align:left;vertical-align:top}
  th{background:#eef;position:sticky;top:0}
  tr.dup{background:#fff4e5}
+ tr.orphaned{background:#e0e7ff}
+ .badge.orph{background:#6366f1;color:#fff}
  tr.noexp{background:#fde8e8}
  tr.stale{background:#fff9db}
  tr.expired{color:#888;text-decoration:line-through}
@@ -310,7 +314,8 @@ module.exports.relaycleanup = function (parent) {
 
 <div class="bar">
  <button onclick="refresh()">Refresh</button>
- <label><input type="checkbox" id="f-dup" checked>Duplicates only</label>
+ <label><input type="checkbox" id="f-dup" checked>Duplicates</label>
+ <label><input type="checkbox" id="f-orph" checked>Orphaned (device deleted)</label>
  <label><input type="checkbox" id="f-all">Show all</label>
  <span class="muted" id="summary"></span>
 </div>
@@ -319,6 +324,7 @@ module.exports.relaycleanup = function (parent) {
  <label><input type="checkbox" id="selall" onchange="toggleAll(this.checked)"> Select all visible</label>
  <button class="danger" onclick="bulkDelete()">Delete Selected</button>
  <button onclick="selectDuplicatesOnly()">Select all duplicates (keep newest)</button>
+ <button onclick="selectOrphansOnly()">Select all orphaned</button>
  <span id="selcount" class="muted">0 selected</span>
  <button onclick="debugRaw()" title="Show raw share fields in console">debug</button>
  <button onclick="debugWhoami()" title="Show user info seen by plugin">whoami</button>
@@ -352,20 +358,25 @@ async function refresh(){
 function visible(row){
   if(document.getElementById('f-all').checked) return true;
   if(row.flags.duplicate && document.getElementById('f-dup').checked) return true;
+  if(row.flags.orphaned  && document.getElementById('f-orph').checked) return true;
   return false;
 }
 
 function render(){
   const tbody = document.querySelector('#tbl tbody');
   tbody.innerHTML = '';
-  let shown=0, dp=0;
+  let shown=0, dp=0, orph=0;
   ROWS.forEach(row=>{
     if(row.flags.duplicate) dp++;
+    if(row.flags.orphaned)  orph++;
     if(!visible(row)) return;
     shown++;
     const tr = document.createElement('tr');
     if(row.flags.duplicate) tr.classList.add('dup');
-    const badges = (row.flags.duplicate?'<span class="badge dup">duplicate</span>':'');
+    if(row.flags.orphaned)  tr.classList.add('orphaned');
+    const badges =
+      (row.flags.duplicate?'<span class="badge dup">duplicate</span>':'')+
+      (row.flags.orphaned ?'<span class="badge orph">orphaned</span>':'');
     tr.innerHTML =
       '<td><input type="checkbox" class="sel" data-id="'+row.id+'"></td>'+
       '<td>'+esc(row.nodeName)+'<div class="muted"><code>'+esc(row.nodeid)+'</code></div></td>'+
@@ -378,7 +389,7 @@ function render(){
     tbody.appendChild(tr);
   });
   document.getElementById('summary').textContent =
-    'Total: '+ROWS.length+' | Shown: '+shown+' | Duplicates: '+dp;
+    'Total: '+ROWS.length+' | Shown: '+shown+' | Duplicates: '+dp+' | Orphaned: '+orph;
   updateCount();
   document.querySelectorAll('.sel').forEach(c=>c.addEventListener('change',updateCount));
 }
@@ -387,6 +398,15 @@ function selectDuplicatesOnly(){
   document.querySelectorAll('.sel').forEach(c=>c.checked=false);
   ROWS.forEach(row=>{
     if(!row.flags.duplicate) return;
+    const cb = document.querySelector('.sel[data-id="'+CSS.escape(row.id)+'"]');
+    if(cb) cb.checked = true;
+  });
+  updateCount();
+}
+function selectOrphansOnly(){
+  document.querySelectorAll('.sel').forEach(c=>c.checked=false);
+  ROWS.forEach(row=>{
+    if(!row.flags.orphaned) return;
     const cb = document.querySelector('.sel[data-id="'+CSS.escape(row.id)+'"]');
     if(cb) cb.checked = true;
   });
@@ -422,7 +442,7 @@ async function debugWhoami(){
   alert('GET and POST whoami logged to console (F12).');
 }
 
-['f-dup','f-all'].forEach(id=>document.getElementById(id).addEventListener('change',render));
+['f-dup','f-orph','f-all'].forEach(id=>document.getElementById(id).addEventListener('change',render));
 refresh();
 </script>
 </body></html>`;

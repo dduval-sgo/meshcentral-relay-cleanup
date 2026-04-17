@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6
+
+- Flag shares whose target node has been deleted from MeshCentral
+  (`orphaned`). New filter toggle and `Select all orphaned` shortcut.
+
 ## 0.1.5
 
 - Rework UI to match what MeshCentral 1.1.x actually stores on deviceshare
