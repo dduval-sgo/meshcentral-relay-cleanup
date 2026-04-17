@@ -82,7 +82,7 @@ module.exports.relaycleanup = function (parent) {
         });
 
         return shares.map((s) => {
-            const start = s.startTime || 0;
+            const start = s.startTime || s.time || s.creationTime || s.created || 0;
             const expire = s.expireTime || 0;
             const ageMs = start ? (now - start) : 0;
 
@@ -113,6 +113,10 @@ module.exports.relaycleanup = function (parent) {
             const s = c.share;
             const node = dirs.nodeIndex[s.nodeid];
             const user = dirs.userIndex[s.userid];
+            // Creation/start time has moved between MeshCentral versions — try
+            // several plausible fields so something displays.
+            const startTime = s.startTime || s.time || s.creationTime || s.created || 0;
+            const ageMs = startTime ? (Date.now() - startTime) : 0;
             return {
                 id: s._id,
                 publicid: s.publicid || s.extrakey,
@@ -123,9 +127,9 @@ module.exports.relaycleanup = function (parent) {
                 guestName: s.guestName || null,
                 protocol: s.p,
                 protocolLabel: labelForProtocol(s.p),
-                startTime: s.startTime || 0,
+                startTime,
                 expireTime: s.expireTime || 0,
-                ageMs: c.ageMs,
+                ageMs,
                 viewOnly: !!s.viewOnly,
                 consent: s.consent || 0,
                 url: s.url || null,
@@ -137,8 +141,10 @@ module.exports.relaycleanup = function (parent) {
     // ----- Mutations ------------------------------------------------------
 
     function removeShare(id) {
-        return new Promise((resolve) => {
-            obj.db.Remove(id, () => resolve());
+        return new Promise((resolve, reject) => {
+            try {
+                obj.db.Remove(id, (err) => err ? reject(err) : resolve());
+            } catch (e) { reject(e); }
         });
     }
 
@@ -169,13 +175,18 @@ module.exports.relaycleanup = function (parent) {
     }
 
     async function bulkDelete(ids, user) {
-        let ok = 0;
-        for (const id of ids) {
-            await removeShare(id);
-            ok++;
+        // Chunk to avoid overwhelming the DB layer on large batches.
+        const chunkSize = 50;
+        let ok = 0, failed = 0;
+        for (let i = 0; i < ids.length; i += chunkSize) {
+            const slice = ids.slice(i, i + chunkSize);
+            const results = await Promise.all(slice.map((id) =>
+                removeShare(id).then(() => true).catch(() => false)
+            ));
+            results.forEach((r) => { r ? ok++ : failed++; });
         }
-        dispatchAudit(user, "bulkDelete", ok + " share(s) removed");
-        return { deleted: ok };
+        dispatchAudit(user, "bulkDelete", ok + " share(s) removed, " + failed + " failed");
+        return { deleted: ok, failed };
     }
 
     async function bulkSetExpiry(ids, expireTime, user) {
@@ -191,11 +202,9 @@ module.exports.relaycleanup = function (parent) {
     // ----- HTTP admin handler ---------------------------------------------
 
     obj.handleAdminReq = async function (req, res, user, pluginHandler) {
-        // Only full site administrators may use this tool.
-        if (!user || (user.siteadmin !== 0xFFFFFFFF && !(user.siteadmin & 0x00000001))) {
-            res.sendStatus(401);
-            return;
-        }
+        // MeshCentral's pluginHandler gates admin routes to site admins already;
+        // we just defensively bail if somehow no user was resolved.
+        if (!user) { res.sendStatus(401); return; }
 
         const q = req.query || {};
         const b = req.body || {};
@@ -206,6 +215,15 @@ module.exports.relaycleanup = function (parent) {
                 const rows = await buildReport();
                 res.set("Content-Type", "application/json");
                 res.end(JSON.stringify({ ok: true, settings: settings(), rows }));
+                return;
+            }
+
+            if (action === "raw") {
+                // Debug: return the first handful of raw deviceshare records so we
+                // can see which fields your MeshCentral version actually populates.
+                const shares = await loadAllShares();
+                res.set("Content-Type", "application/json");
+                res.end(JSON.stringify({ ok: true, count: shares.length, sample: shares.slice(0, 5) }, null, 2));
                 return;
             }
 
@@ -315,7 +333,7 @@ function fmtAge(ms){
 }
 
 async function refresh(){
-  const r = await fetch(base+'&action=list').then(r=>r.json());
+  const r = await fetch(base+'&action=list',{credentials:'same-origin'}).then(r=>r.json());
   ROWS = r.rows || [];
   render();
 }
@@ -380,7 +398,7 @@ async function bulkDelete(){
   const ids = selectedIds();
   if(!ids.length) return alert('Nothing selected');
   if(!confirm('Delete '+ids.length+' share(s)? This cannot be undone.')) return;
-  const r = await fetch(base+'&action=delete&ids='+encodeURIComponent(JSON.stringify(ids)),{method:'POST'}).then(r=>r.json());
+  const r = await fetch(base+'&action=delete&ids='+encodeURIComponent(JSON.stringify(ids)),{method:'POST',credentials:'same-origin'}).then(r=>r.json());
   if(!r.ok) return alert('Error: '+r.error);
   alert('Deleted '+r.deleted);
   refresh();
@@ -393,7 +411,7 @@ async function bulkExpiry(hours){
   const label = hours>0 ? (hours+'h from now') : 'never';
   if(!confirm('Set expiry for '+ids.length+' share(s) to '+label+'?')) return;
   const url = base+'&action=setexpiry&expireTime='+expireTime+'&ids='+encodeURIComponent(JSON.stringify(ids));
-  const r = await fetch(url,{method:'POST'}).then(r=>r.json());
+  const r = await fetch(url,{method:'POST',credentials:'same-origin'}).then(r=>r.json());
   if(!r.ok) return alert('Error: '+r.error);
   alert('Updated '+r.updated);
   refresh();

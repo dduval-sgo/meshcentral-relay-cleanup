@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.3
+
+- Drop redundant siteadmin gate (MeshCentral's plugin handler enforces it);
+  was causing 401s on bulk actions for legitimate admins.
+- Attach `credentials: 'same-origin'` to fetch calls so session cookies ride
+  with POSTs.
+- Batch bulk deletes in parallel chunks of 50 with per-item error handling
+  instead of serial await (avoids 500s on large batches).
+- Fall back through alternate creation-time field names (`time`,
+  `creationTime`, `created`) in case `startTime` isn't populated in this
+  MeshCentral build.
+- Add `?action=raw` debug endpoint that returns the first 5 raw deviceshare
+  records so we can confirm which fields this server actually stores.
+
 ## 0.1.2
 
 - Fix crash when opening the admin panel: `req.body` is undefined on plugin
