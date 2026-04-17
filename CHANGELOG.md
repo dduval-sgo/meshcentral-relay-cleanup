@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2
+
+- Fix crash when opening the admin panel: `req.body` is undefined on plugin
+  admin routes (no body-parser middleware). Guard all `req.body` reads and
+  move bulk-action payloads into the query string.
+
 ## 0.1.1
 
 - Fix plugin manifest: rename `versionsUrl` → `versionHistoryUrl`, add

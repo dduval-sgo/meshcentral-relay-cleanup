@@ -197,7 +197,9 @@ module.exports.relaycleanup = function (parent) {
             return;
         }
 
-        const action = (req.query.action || req.body.action || "view").toString();
+        const q = req.query || {};
+        const b = req.body || {};
+        const action = (q.action || b.action || "view").toString();
 
         try {
             if (action === "list") {
@@ -217,7 +219,7 @@ module.exports.relaycleanup = function (parent) {
 
             if (action === "setexpiry") {
                 const ids = parseIds(req);
-                const expireTime = Number(req.body.expireTime || req.query.expireTime || 0) || 0;
+                const expireTime = Number(b.expireTime || q.expireTime || 0) || 0;
                 const result = await bulkSetExpiry(ids, expireTime, user);
                 res.set("Content-Type", "application/json");
                 res.end(JSON.stringify({ ok: true, ...result }));
@@ -235,7 +237,7 @@ module.exports.relaycleanup = function (parent) {
     };
 
     function parseIds(req) {
-        const raw = req.body.ids || req.query.ids;
+        const raw = (req.body && req.body.ids) || (req.query && req.query.ids);
         if (!raw) return [];
         if (Array.isArray(raw)) return raw;
         try { return JSON.parse(raw); } catch (_) { return String(raw).split(","); }
@@ -378,7 +380,7 @@ async function bulkDelete(){
   const ids = selectedIds();
   if(!ids.length) return alert('Nothing selected');
   if(!confirm('Delete '+ids.length+' share(s)? This cannot be undone.')) return;
-  const r = await fetch(base+'&action=delete',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'ids='+encodeURIComponent(JSON.stringify(ids))}).then(r=>r.json());
+  const r = await fetch(base+'&action=delete&ids='+encodeURIComponent(JSON.stringify(ids)),{method:'POST'}).then(r=>r.json());
   if(!r.ok) return alert('Error: '+r.error);
   alert('Deleted '+r.deleted);
   refresh();
@@ -390,8 +392,8 @@ async function bulkExpiry(hours){
   const expireTime = hours>0 ? (Date.now()+hours*3600000) : 0;
   const label = hours>0 ? (hours+'h from now') : 'never';
   if(!confirm('Set expiry for '+ids.length+' share(s) to '+label+'?')) return;
-  const body = 'ids='+encodeURIComponent(JSON.stringify(ids))+'&expireTime='+expireTime;
-  const r = await fetch(base+'&action=setexpiry',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body}).then(r=>r.json());
+  const url = base+'&action=setexpiry&expireTime='+expireTime+'&ids='+encodeURIComponent(JSON.stringify(ids));
+  const r = await fetch(url,{method:'POST'}).then(r=>r.json());
   if(!r.ok) return alert('Error: '+r.error);
   alert('Updated '+r.updated);
   refresh();
