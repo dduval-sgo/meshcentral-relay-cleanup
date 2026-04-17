@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.5
+
+- Rework UI to match what MeshCentral 1.1.x actually stores on deviceshare
+  records: no `startTime`/`expireTime` in the DB (expiration is encrypted
+  inside the share URL's `c=` param). Drop the age/stale/expired filters
+  and `setexpiry` bulk action — they can't work on this version.
+- Focus the tool on duplicate detection + deletion. Add `Select all
+  duplicates (keep newest)` shortcut button.
+- Show `port` column (relevant for Web Relay shares).
+
 ## 0.1.4
 
 - Switch bulk actions from POST to GET (same handler, same auth, avoids any

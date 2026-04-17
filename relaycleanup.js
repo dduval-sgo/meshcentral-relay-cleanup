@@ -19,6 +19,9 @@ module.exports.relaycleanup = function (parent) {
     // NOTE: These values match current MeshCentral (1.1.x) device-share records.
     // Verify against meshuser.js "createDeviceShareLink" if a future version
     // changes the encoding.
+    // Share protocol codes. Confirmed from live 1.1.57 data:
+    //   1 = Terminal (SSH), 8 = Web Relay (HTTP with port)
+    // Others are inferred from MeshCentral source and may need adjustment.
     const PROTOCOL_LABELS = {
         1: "Terminal",
         2: "Desktop",
@@ -127,6 +130,7 @@ module.exports.relaycleanup = function (parent) {
                 guestName: s.guestName || null,
                 protocol: s.p,
                 protocolLabel: labelForProtocol(s.p),
+                port: s.port || null,
                 startTime,
                 expireTime: s.expireTime || 0,
                 ageMs,
@@ -189,15 +193,12 @@ module.exports.relaycleanup = function (parent) {
         return { deleted: ok, failed };
     }
 
-    async function bulkSetExpiry(ids, expireTime, user) {
-        let ok = 0;
-        for (const id of ids) {
-            if (await updateShareExpiry(id, expireTime)) ok++;
-        }
-        dispatchAudit(user, "bulkSetExpiry",
-            ok + " share(s) → " + (expireTime ? new Date(expireTime).toISOString() : "never"));
-        return { updated: ok };
-    }
+    // Note: setexpiry removed in 0.1.5. MeshCentral 1.1.x doesn't store
+    // expireTime on deviceshare records — the expiration is encoded inside
+    // the encrypted URL cookie. Setting it in the DB has no effect on
+    // share validity. Left here as a placeholder in case a future version
+    // starts honouring the DB field.
+    async function bulkSetExpiry() { return { updated: 0 }; }
 
     // ----- HTTP admin handler ---------------------------------------------
 
@@ -305,25 +306,19 @@ module.exports.relaycleanup = function (parent) {
 </style></head>
 <body>
 <h2>Device Share Cleanup</h2>
-<p class="muted">Stale threshold: <b>${s.staleHours}h</b> (configurable in <code>config.json</code> → <code>relaycleanup.staleHours</code>).</p>
+<p class="muted">MeshCentral 1.1.x stores share expiration inside the encrypted URL, not in the DB record, so creation time and expiry aren't shown here. This tool focuses on finding <b>duplicates</b> (multiple active shares of the same type/user/device) and pruning the backlog.</p>
 
 <div class="bar">
  <button onclick="refresh()">Refresh</button>
- <label><input type="checkbox" id="f-noexp" checked>No Expiry</label>
- <label><input type="checkbox" id="f-stale" checked>Stale (>${s.staleHours}h)</label>
- <label><input type="checkbox" id="f-dup" checked>Duplicates</label>
- <label><input type="checkbox" id="f-exp">Already Expired</label>
- <label><input type="checkbox" id="f-clean">Healthy</label>
+ <label><input type="checkbox" id="f-dup" checked>Duplicates only</label>
+ <label><input type="checkbox" id="f-all">Show all</label>
  <span class="muted" id="summary"></span>
 </div>
 
 <div class="bar">
  <label><input type="checkbox" id="selall" onchange="toggleAll(this.checked)"> Select all visible</label>
  <button class="danger" onclick="bulkDelete()">Delete Selected</button>
- <span>Set expiry:</span>
- <button onclick="bulkExpiry(24)">24h</button>
- <button onclick="bulkExpiry(168)">7d</button>
- <button onclick="bulkExpiry(0)">Never (clear)</button>
+ <button onclick="selectDuplicatesOnly()">Select all duplicates (keep newest)</button>
  <span id="selcount" class="muted">0 selected</span>
  <button onclick="debugRaw()" title="Show raw share fields in console">debug</button>
  <button onclick="debugWhoami()" title="Show user info seen by plugin">whoami</button>
@@ -331,8 +326,7 @@ module.exports.relaycleanup = function (parent) {
 
 <table id="tbl">
  <thead><tr>
-  <th></th><th>Device</th><th>User</th><th>Type</th><th>Flags</th>
-  <th>Created</th><th>Age</th><th>Expires</th><th>Public ID</th>
+  <th></th><th>Device</th><th>User</th><th>Type</th><th>Guest</th><th>Port</th><th>Flags</th><th>Public ID</th>
  </tr></thead>
  <tbody></tbody>
 </table>
@@ -356,53 +350,47 @@ async function refresh(){
 }
 
 function visible(row){
-  const f = row.flags;
-  const healthy = !f.noExpiry && !f.stale && !f.duplicate && !f.expired;
-  if(f.noExpiry  && document.getElementById('f-noexp').checked) return true;
-  if(f.stale    && document.getElementById('f-stale').checked) return true;
-  if(f.duplicate && document.getElementById('f-dup').checked)  return true;
-  if(f.expired  && document.getElementById('f-exp').checked)   return true;
-  if(healthy    && document.getElementById('f-clean').checked) return true;
+  if(document.getElementById('f-all').checked) return true;
+  if(row.flags.duplicate && document.getElementById('f-dup').checked) return true;
   return false;
 }
 
 function render(){
   const tbody = document.querySelector('#tbl tbody');
   tbody.innerHTML = '';
-  let shown=0, ne=0, st=0, dp=0, ex=0;
+  let shown=0, dp=0;
   ROWS.forEach(row=>{
-    if(row.flags.noExpiry) ne++;
-    if(row.flags.stale) st++;
     if(row.flags.duplicate) dp++;
-    if(row.flags.expired) ex++;
     if(!visible(row)) return;
     shown++;
     const tr = document.createElement('tr');
     if(row.flags.duplicate) tr.classList.add('dup');
-    if(row.flags.noExpiry)  tr.classList.add('noexp');
-    if(row.flags.stale)     tr.classList.add('stale');
-    if(row.flags.expired)   tr.classList.add('expired');
-    const badges =
-      (row.flags.noExpiry ?'<span class="badge noexp">no-expiry</span>':'') +
-      (row.flags.stale    ?'<span class="badge stale">stale</span>':'') +
-      (row.flags.duplicate?'<span class="badge dup">duplicate</span>':'') +
-      (row.flags.expired  ?'<span class="badge expired">expired</span>':'');
+    const badges = (row.flags.duplicate?'<span class="badge dup">duplicate</span>':'');
     tr.innerHTML =
       '<td><input type="checkbox" class="sel" data-id="'+row.id+'"></td>'+
       '<td>'+esc(row.nodeName)+'<div class="muted"><code>'+esc(row.nodeid)+'</code></div></td>'+
-      '<td>'+esc(row.userName)+(row.guestName?'<div class="muted">guest: '+esc(row.guestName)+'</div>':'')+'</td>'+
+      '<td>'+esc(row.userName)+'</td>'+
       '<td>'+esc(row.protocolLabel)+(row.viewOnly?' <span class="muted">(view-only)</span>':'')+'</td>'+
+      '<td>'+esc(row.guestName||'')+'</td>'+
+      '<td>'+(row.port||'')+'</td>'+
       '<td>'+badges+'</td>'+
-      '<td>'+fmtTime(row.startTime)+'</td>'+
-      '<td>'+fmtAge(row.ageMs)+'</td>'+
-      '<td>'+(row.expireTime?fmtTime(row.expireTime):'<b>never</b>')+'</td>'+
       '<td><code>'+esc(row.publicid||'')+'</code></td>';
     tbody.appendChild(tr);
   });
   document.getElementById('summary').textContent =
-    'Total: '+ROWS.length+' | Shown: '+shown+' | No-expiry: '+ne+' | Stale: '+st+' | Dup: '+dp+' | Expired: '+ex;
+    'Total: '+ROWS.length+' | Shown: '+shown+' | Duplicates: '+dp;
   updateCount();
   document.querySelectorAll('.sel').forEach(c=>c.addEventListener('change',updateCount));
+}
+
+function selectDuplicatesOnly(){
+  document.querySelectorAll('.sel').forEach(c=>c.checked=false);
+  ROWS.forEach(row=>{
+    if(!row.flags.duplicate) return;
+    const cb = document.querySelector('.sel[data-id="'+CSS.escape(row.id)+'"]');
+    if(cb) cb.checked = true;
+  });
+  updateCount();
 }
 
 function esc(x){ return String(x==null?'':x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -421,19 +409,6 @@ async function bulkDelete(){
   refresh();
 }
 
-async function bulkExpiry(hours){
-  const ids = selectedIds();
-  if(!ids.length) return alert('Nothing selected');
-  const expireTime = hours>0 ? (Date.now()+hours*3600000) : 0;
-  const label = hours>0 ? (hours+'h from now') : 'never';
-  if(!confirm('Set expiry for '+ids.length+' share(s) to '+label+'?')) return;
-  const url = base+'&action=setexpiry&expireTime='+expireTime+'&ids='+encodeURIComponent(JSON.stringify(ids));
-  const r = await fetch(url,{credentials:'same-origin'}).then(r=>r.json());
-  if(!r.ok) return alert('Error: '+r.error);
-  alert('Updated '+r.updated);
-  refresh();
-}
-
 async function debugRaw(){
   const r = await fetch(base+'&action=raw',{credentials:'same-origin'}).then(r=>r.text());
   console.log('[relaycleanup] raw:', r);
@@ -447,7 +422,7 @@ async function debugWhoami(){
   alert('GET and POST whoami logged to console (F12).');
 }
 
-['f-noexp','f-stale','f-dup','f-exp','f-clean'].forEach(id=>document.getElementById(id).addEventListener('change',render));
+['f-dup','f-all'].forEach(id=>document.getElementById(id).addEventListener('change',render));
 refresh();
 </script>
 </body></html>`;
