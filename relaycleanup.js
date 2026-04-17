@@ -423,9 +423,26 @@ async function bulkDelete(){
   const ids = selectedIds();
   if(!ids.length) return alert('Nothing selected');
   if(!confirm('Delete '+ids.length+' share(s)? This cannot be undone.')) return;
-  const r = await fetch(base+'&action=delete&ids='+encodeURIComponent(JSON.stringify(ids)),{credentials:'same-origin'}).then(r=>r.json());
-  if(!r.ok) return alert('Error: '+r.error);
-  alert('Deleted '+r.deleted);
+  // Chunk client-side: each share id is ~20 chars + encoding overhead.
+  // 100 IDs per request keeps the URL well under the 8 KB limit most
+  // servers/proxies enforce.
+  const chunkSize = 100;
+  let deleted = 0, failed = 0;
+  const btn = event && event.target; if(btn) btn.disabled = true;
+  for(let i=0; i<ids.length; i+=chunkSize){
+    const slice = ids.slice(i, i+chunkSize);
+    try {
+      const r = await fetch(base+'&action=delete&ids='+encodeURIComponent(JSON.stringify(slice)),{credentials:'same-origin'}).then(r=>r.json());
+      if(r.ok){ deleted += (r.deleted||0); failed += (r.failed||0); }
+      else { failed += slice.length; console.error('[relaycleanup] chunk failed:', r); }
+    } catch(e){
+      failed += slice.length;
+      console.error('[relaycleanup] chunk error:', e);
+    }
+    if(btn) btn.textContent = 'Deleting… '+(i+slice.length)+' / '+ids.length;
+  }
+  if(btn){ btn.disabled = false; btn.textContent = 'Delete Selected'; }
+  alert('Deleted '+deleted+(failed?' ('+failed+' failed — see console)':''));
   refresh();
 }
 

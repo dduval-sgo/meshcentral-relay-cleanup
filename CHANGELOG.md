@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.7
+
+- Chunk bulk-delete on the **client** side (100 IDs per request). Previous
+  single-request bulk deletes hit the ~8 KB URL length limit somewhere past
+  300–450 selected IDs. Progress now shown on the button while chunks
+  process.
+
 ## 0.1.6
 
 - Flag shares whose target node has been deleted from MeshCentral

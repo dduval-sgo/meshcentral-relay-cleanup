@@ -1,7 +1,7 @@
 {
   "name": "relaycleanup",
   "shortName": "relaycleanup",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "author": "Desmond Duval <dduval@showgroundsonline.com>",
   "description": "Scan and prune stale or duplicated device sharing links (Desktop / Terminal / Web Relay / Files).",
   "hasAdminPanel": true,
