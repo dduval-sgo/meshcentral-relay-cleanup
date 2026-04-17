@@ -204,7 +204,11 @@ module.exports.relaycleanup = function (parent) {
     obj.handleAdminReq = async function (req, res, user, pluginHandler) {
         // MeshCentral's pluginHandler gates admin routes to site admins already;
         // we just defensively bail if somehow no user was resolved.
-        if (!user) { res.sendStatus(401); return; }
+        if (!user) {
+            res.status(401).set("Content-Type", "application/json")
+                .end(JSON.stringify({ ok: false, error: "plugin:no-user", method: req.method }));
+            return;
+        }
 
         const q = req.query || {};
         const b = req.body || {};
@@ -219,11 +223,22 @@ module.exports.relaycleanup = function (parent) {
             }
 
             if (action === "raw") {
-                // Debug: return the first handful of raw deviceshare records so we
-                // can see which fields your MeshCentral version actually populates.
+                // Debug: first 5 raw deviceshare records — so we can see which
+                // fields this MeshCentral build populates.
                 const shares = await loadAllShares();
                 res.set("Content-Type", "application/json");
                 res.end(JSON.stringify({ ok: true, count: shares.length, sample: shares.slice(0, 5) }, null, 2));
+                return;
+            }
+
+            if (action === "whoami") {
+                // Debug: echo what the plugin sees about the caller + method.
+                res.set("Content-Type", "application/json");
+                res.end(JSON.stringify({
+                    ok: true,
+                    method: req.method,
+                    user: user ? { _id: user._id, name: user.name, siteadmin: user.siteadmin, domain: user.domain } : null
+                }, null, 2));
                 return;
             }
 
@@ -310,6 +325,8 @@ module.exports.relaycleanup = function (parent) {
  <button onclick="bulkExpiry(168)">7d</button>
  <button onclick="bulkExpiry(0)">Never (clear)</button>
  <span id="selcount" class="muted">0 selected</span>
+ <button onclick="debugRaw()" title="Show raw share fields in console">debug</button>
+ <button onclick="debugWhoami()" title="Show user info seen by plugin">whoami</button>
 </div>
 
 <table id="tbl">
@@ -398,7 +415,7 @@ async function bulkDelete(){
   const ids = selectedIds();
   if(!ids.length) return alert('Nothing selected');
   if(!confirm('Delete '+ids.length+' share(s)? This cannot be undone.')) return;
-  const r = await fetch(base+'&action=delete&ids='+encodeURIComponent(JSON.stringify(ids)),{method:'POST',credentials:'same-origin'}).then(r=>r.json());
+  const r = await fetch(base+'&action=delete&ids='+encodeURIComponent(JSON.stringify(ids)),{credentials:'same-origin'}).then(r=>r.json());
   if(!r.ok) return alert('Error: '+r.error);
   alert('Deleted '+r.deleted);
   refresh();
@@ -411,10 +428,23 @@ async function bulkExpiry(hours){
   const label = hours>0 ? (hours+'h from now') : 'never';
   if(!confirm('Set expiry for '+ids.length+' share(s) to '+label+'?')) return;
   const url = base+'&action=setexpiry&expireTime='+expireTime+'&ids='+encodeURIComponent(JSON.stringify(ids));
-  const r = await fetch(url,{method:'POST',credentials:'same-origin'}).then(r=>r.json());
+  const r = await fetch(url,{credentials:'same-origin'}).then(r=>r.json());
   if(!r.ok) return alert('Error: '+r.error);
   alert('Updated '+r.updated);
   refresh();
+}
+
+async function debugRaw(){
+  const r = await fetch(base+'&action=raw',{credentials:'same-origin'}).then(r=>r.text());
+  console.log('[relaycleanup] raw:', r);
+  alert('Raw sample logged to console (F12).');
+}
+async function debugWhoami(){
+  const getR = await fetch(base+'&action=whoami',{credentials:'same-origin'}).then(r=>r.text());
+  const postR = await fetch(base+'&action=whoami',{method:'POST',credentials:'same-origin'}).then(r=>r.text());
+  console.log('[relaycleanup] GET whoami:', getR);
+  console.log('[relaycleanup] POST whoami:', postR);
+  alert('GET and POST whoami logged to console (F12).');
 }
 
 ['f-noexp','f-stale','f-dup','f-exp','f-clean'].forEach(id=>document.getElementById(id).addEventListener('change',render));

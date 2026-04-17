@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.4
+
+- Switch bulk actions from POST to GET (same handler, same auth, avoids any
+  POST-specific gate in MeshCentral's `/pluginadmin.ashx` path).
+- Tag plugin-side 401s with a JSON body so they can be told apart from
+  MeshCentral's upstream `Unauthorized` text response.
+- Add `debug` / `whoami` buttons to the toolbar for field inspection.
+
 ## 0.1.3
 
 - Drop redundant siteadmin gate (MeshCentral's plugin handler enforces it);
